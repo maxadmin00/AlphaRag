@@ -1,1 +1,0 @@
-{ "name": "Alfabank.ru", "short_name": "Alfabank.ru", "icons": [ { "src": "https://assets.flocktory.com/uploads/cabinet_image/bce46502-7b92-4c49-856e-43e8b3373a2b_logotype.jpg", "sizes": "192x192" } ], "start_url": "/", "display": "standalone", "gcm_sender_id": "382987219025", "gcm_user_visible_only": true, "theme_color": "#f03226" }
