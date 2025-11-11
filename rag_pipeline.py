@@ -5,7 +5,7 @@ import os
 from langchain_chroma import Chroma
 from langchain_classic.retrievers.contextual_compression import ContextualCompressionRetriever
 from langchain_community.document_compressors import FlashrankRerank
-from flashrank import Ranker 
+from flashrank import Ranker, RerankRequest
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from typing import TypedDict, Optional
@@ -19,7 +19,7 @@ class RAGState(TypedDict):
     pages: Optional[list]
 
 class RAGAgent:
-    def __init__(self, retrieve_k = 20, context_k = 5):
+    def __init__(self, retrieve_k = 10, context_k = 5):
         dotenv.load_dotenv()
 
         embeddings = OllamaEmbeddings(
@@ -33,18 +33,15 @@ class RAGAgent:
         )
 
         vectorstore = Chroma(
-            collection_name="docs",
+            collection_name="websites_data",
             embedding_function=embeddings,
-            persist_directory="./chroma_docs"
+            persist_directory="./alpha_chroma_db"
         )
 
-        ranker = Ranker(model_name="ms-marco-MiniLM-L-12-v2")
-
-        retriever = vectorstore.as_retriever(search_kwargs={"k": retrieve_k})
-        compressor = FlashrankRerank(top_n=context_k, model='ms-marco-MiniLM-L-12-v2')
-        self.compression_retriever = ContextualCompressionRetriever(
-            base_compressor=compressor, base_retriever=retriever
-        )
+        compressor = FlashrankRerank(model="ms-marco-MiniLM-L-12-v2", top_n = context_k)
+        base_retriever = vectorstore.as_retriever(search_kwargs={"k": retrieve_k})
+        self.retriever = ContextualCompressionRetriever(base_compressor=compressor, base_retriever=base_retriever)
+        #self.context_k = context_k
 
         self.systemprompt = '''Ты профессиональный банковский помощник. Твоя задача давать клиенту правидивую и релевантную информацию по поводу банковских услуг.
                 Тебе будут даны вопрос пользователя и контекст по 5 документам, в которых дана информация по теме вопроса
@@ -74,38 +71,41 @@ class RAGAgent:
         self.graph = builder.compile()
     
     def input_node(self, state: RAGState):
+        print(state['query'])
         return state
     
     def get_relevant_docs(self, state: RAGState):
         query = state['query']
-        docs = self.compression_retriever._get_relevant_documents(f'query: {query}')
-        pages = [doc.metadata['web_page'] for doc in docs]
+        docs = self.retriever.invoke(f'query: {query}')
+        pages = [doc.metadata['web_id'] for doc in docs]
         return {'docs': docs, 'pages': pages}
 
     def get_answer(self, state: RAGState):
+        current_context = [doc.page_content for doc in state['docs']]
         msg = self.llm.invoke(self.prompt.invoke(
-            {"systemprompt": SystemMessage(self.systemprompt),
-            "context": SystemMessage(self.context.format([doc.page_content for doc in state['docs']])),
-            "query": HumanMessage(self.query.format(state['query']))}
+            {"systemprompt": [SystemMessage(self.systemprompt)],
+            "context": [SystemMessage(self.context.format(*current_context))],
+            "query": [HumanMessage(self.query.format(state['query']))]}
         ))
-        answer = msg["messages"][-1].content
+        answer = msg.content
+        print(answer)
         return {'answer': answer}
     
-    def get_answer(self, query):
+    def ask_question(self, query):
         output = self.graph.invoke({'query': query})
         return {'answer': output['answer'], 'pages': output['pages']}
 
 if __name__ == '__main__':
     agent = RAGAgent()
     
-    df = pd.read_csv('.//questions_clean.csv')
+    df = pd.read_csv('./data/questions_clean.csv')
     pages = []
     for i, row in df.iterrows():
-        output = agent.get_answer(row.query)
+        output = agent.ask_question(row.query)
         pages.append(str(output['pages']))
     
-    subm = pd.read_csv('.//sample_submission.csv')
+    subm = pd.read_csv('./data/sample_submission.csv')
     subm.web_list = pages
-    subm.to_csv('subm.csv', index = False)
+    subm.to_csv('./subm/subm.csv', index = False)
 
 
